@@ -57,6 +57,8 @@ void loop()
     Serial.println(rssi);
     if (rssi > RSSI_THRESHOLD && device_found == true)
     {
+
+      // Try and connect using ESPNow and get the key.
       Serial.println("Door Open");
       digitalWrite(relay, HIGH);
       delay(5000);
