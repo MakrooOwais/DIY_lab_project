@@ -43,6 +43,10 @@ void setup() {
   pBLEScan->setActiveScan(true); //active scan uses more power, but get results faster
   pBLEScan->setInterval(100); // set Scan interval
   pBLEScan->setWindow(99);  // less or equal setInterval value
+  // Set device as a Wi-Fi Station
+  WiFi.mode(WIFI_STA);
+  // Set PMK key
+  esp_now_set_pmk((uint8_t *)PMK_KEY_STR);
 }
 void loop() 
 {
@@ -59,6 +63,26 @@ void loop()
     {
 
       // Try and connect using ESPNow and get the key.
+      // Register the receiver board as peer
+    esp_now_peer_info_t peerInfo;
+    memcpy(peerInfo.peer_addr, receiverAddress, 6);
+    peerInfo.channel = 0;
+    //Set the receiver device LMK key
+    for (uint8_t i = 0; i < 16; i++) {
+      peerInfo.lmk[i] = LMK_KEY_STR[i];
+    }
+    // Set encryption to true
+    peerInfo.encrypt = true;
+    
+    // Add receiver as peer        
+    if (esp_now_add_peer(&peerInfo) != ESP_OK){
+      Serial.println("Failed to add peer");
+      return;
+    }
+
+  // Once ESPNow is successfully Init, we will register for Send CB to
+  // get the status of transmitted packet
+  esp_now_register_send_cb(OnDataSent);
       Serial.println("Door Open");
       digitalWrite(relay, HIGH);
       delay(5000);
