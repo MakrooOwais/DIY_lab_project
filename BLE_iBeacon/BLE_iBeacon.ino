@@ -1,103 +1,72 @@
-#include "sys/time.h"
-#include "BLEDevice.h"
-#include "BLEUtils.h"
-#include "BLEServer.h"
-#include "BLEBeacon.h"
-#include "esp_sleep.h"
+#include <esp_now.h>
+#include <WiFi.h>
 
-#define GPIO_DEEP_SLEEP_DURATION     1  // sleep x seconds and then wake up
-RTC_DATA_ATTR static time_t last;        // remember last boot in RTC Memory
-RTC_DATA_ATTR static uint32_t bootcount; // remember number of boots in RTC Memory
+// lockAddress stores the MAC Address of the lock module.
+uint8_t lockAddress[] = {0x8C, 0xAA,  0xB5, 0x8B, 0x7E, 0x94};
 
-#define Mode_Button 25  // Continuous Mode - Trigger Mode
-#define Trigger 4 // Trigger Button 
+// Defina a datatype struct_message that will be used for communication between the two modules.
+typedef struct struct_message {
+    String Password;
+} struct_message;
 
-// See the following for generating UUIDs:
-// https://www.uuidgenerator.net/
-BLEAdvertising *pAdvertising;   // BLE Advertisement type
-struct timeval now;
+// Create a struct_message called myData
+struct_message myData;
 
-#define BEACON_UUID "87b99b2c-90fd-11e9-bc42-526af7764f64" // UUID 1 128-Bit (may use linux tool uuidgen or random numbers via https://www.uuidgenerator.net/)
+// We populate the password field of the myData struct by "THIS IS A CHAR" (Lack of Imagination!!).
+myData.Password = String("THIS IS A CHAR");
 
-void setBeacon()
-{
+// Define a variable of the type esp_now_peer_info_t that will store the connection information for a session.
+esp_now_peer_info_t peerInfo;
 
-  BLEBeacon oBeacon = BLEBeacon();
-  oBeacon.setManufacturerId(0x4C00); // fake Apple 0x004C LSB (ENDIAN_CHANGE_U16!)
-  oBeacon.setProximityUUID(BLEUUID(BEACON_UUID));
-  oBeacon.setMajor((bootcount & 0xFFFF0000) >> 16);
-  oBeacon.setMinor(bootcount & 0xFFFF);
-  BLEAdvertisementData oAdvertisementData = BLEAdvertisementData();
-  BLEAdvertisementData oScanResponseData = BLEAdvertisementData();
-
-  oAdvertisementData.setFlags(0x04); // BR_EDR_NOT_SUPPORTED 0x04
-
-  std::string strServiceData = "";
-
-  strServiceData += (char)26;     // Len
-  strServiceData += (char)0xFF;   // Type
-  strServiceData += oBeacon.getData();
-  oAdvertisementData.addData(strServiceData);
-
-  pAdvertising->setAdvertisementData(oAdvertisementData);
-  pAdvertising->setScanResponseData(oScanResponseData);
+// This is a callback function. i.e., it is a function which will be executed every single time some data is recieved by the lock.
+void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+  Serial.print("\r\nLast Packet Send Status:\t");
+  Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
 }
-
+ 
 void setup() {
-
+  // Initialise Serial Monitor.
   Serial.begin(115200);
-  pinMode(Mode_Button, INPUT);
-  pinMode(Trigger, OUTPUT);
-  gettimeofday(&now, NULL);
-  Serial.printf("start ESP32 %d\n", bootcount++);
-  Serial.printf("deep sleep (%lds since last reset, %lds since last boot)\n", now.tv_sec, now.tv_sec - last);
-  last = now.tv_sec;
+ 
+  // Set device as a Wi-Fi Station.
+  WiFi.mode(WIFI_STA);
 
+  // Init ESP-NOW.
+  // Check if ESP-NOW was initialised properly, if it wasn't, log it to the Serial monitor and reset.
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("Error initializing ESP-NOW");
+    return;
+  }
+
+  // Once ESPNow is successfully Init, we will register for Send CB to
+  // get the status of Trasnmitted packet
+  esp_now_register_send_cb(OnDataSent);
+  
+  // We define all the parameters for the connection (reciever address, encryption status and communication channel)
+  memcpy(peerInfo.peer_addr, lockAddress, 6);
+  peerInfo.channel = 0;  
+  peerInfo.encrypt = false;
+  
+  // We add the device defined by the above parameters as a peer.
+  // Check if the connection was established and if it wasn't we reset and start over.
+  if (esp_now_add_peer(&peerInfo) != ESP_OK){
+    Serial.println("Failed to add peer");
+    return;
+  }
 }
+ 
+void loop() {  
+  // Send a message to the connected peer that contains the password on a loop.
+  esp_err_t result = esp_now_send(lockAddress, (uint8_t *) &myData, sizeof(myData));
 
-void loop() {
-
-  if (digitalRead(Mode_Button)) // Continuous Transmitting Mode (Consumes more battery)
-  {
-    Serial.println("Continuous mode");
-    // Create the BLE Device
-    BLEDevice::init("techiesms Beacon Keychain"); // Name of your Beacon Device 
-    // Create the BLE Server
-    BLEServer *pServer = BLEDevice::createServer(); // <-- no longer required to instantiate BLEServer, less flash and ram usage
-    pAdvertising = BLEDevice::getAdvertising();
-    BLEDevice::startAdvertising();
-    setBeacon();
-    // Start advertising
-    pAdvertising->start();
-    Serial.println("Advertizing started...");
-    delay(1000);
-    pAdvertising->stop();
-    Serial.printf("enter deep sleep\n");
-    esp_deep_sleep(5000000LL * GPIO_DEEP_SLEEP_DURATION);
-    Serial.printf("in deep sleep\n");
+  // We check if the message was sent successfully and log it to the Serial Monitor.
+  if (result == ESP_OK) {
+    Serial.println("Sent with success");
+  }
+  else {
+    Serial.println("Error sending the data");
   }
 
-  else  // Transmit on Trigger Mode
-  {
-    Serial.println("Trigger mode");
-    // Create the BLE Device
-    BLEDevice::init("techiesms Beacon Keychain");
-    // Create the BLE Server
-    BLEServer *pServer = BLEDevice::createServer(); // <-- no longer required to instantiate BLEServer, less flash and ram usage
-    pAdvertising = BLEDevice::getAdvertising();
-    BLEDevice::startAdvertising();
-    setBeacon();
-    // Start advertising
-    pAdvertising->start();
-    Serial.println("Advertizing started...");
-    delay(1000);
-    pAdvertising->stop();
-
-
-    //Configure GPIO2 as ext0 wake up source for HIGH logic level
-    esp_sleep_enable_ext0_wakeup(GPIO_NUM_4, 0);
-
-    //Go to sleep now
-    esp_deep_sleep_start();
-  }
+  // We wait for 2 seconds before broadcasting again.
+  delay(2000);
 }

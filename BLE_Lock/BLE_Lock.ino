@@ -1,95 +1,65 @@
-#include <BLEDevice.h>
-#include <BLEUtils.h>
-#include <BLEScan.h>
-#include <BLEAdvertisedDevice.h>
+#include <esp_now.h>
+#include <WiFi.h>
 
-#define relay 2
+// Define and initialize an int relay to 26. GPIO26 will be used to control the relay.
+int relay = 26;
 
-String knownBLEAddresses[] = {"cd:47:45:86:a8:cc", "3c:71:bf:4c:9c:d2"};
-int RSSI_THRESHOLD = -100;
-bool device_found;
-int scanTime = 1; //In seconds
-BLEScan* pBLEScan;
-class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
-    void onResult(BLEAdvertisedDevice advertisedDevice) {
-      for (int i = 0; i < (sizeof(knownBLEAddresses) / sizeof(knownBLEAddresses[0])); i++)
-      {
-        //Uncomment to Enable Debug Information
-        //Serial.println("*************Start**************");
-        //Serial.println(sizeof(knownBLEAddresses));
-        //Serial.println(sizeof(knownBLEAddresses[0]));
-        //Serial.println(sizeof(knownBLEAddresses)/sizeof(knownBLEAddresses[0]));
-        //Serial.println(advertisedDevice.getAddress().toString().c_str());
-        //Serial.println(knownBLEAddresses[i].c_str());
-        //Serial.println("*************End**************");
-        if (strcmp(advertisedDevice.getAddress().toString().c_str(), knownBLEAddresses[i].c_str()) == 0)
-        {
-          device_found = true;
-          break;
-        }
-        else
-          device_found = false;
-      }
-      Serial.printf("Advertised Device: %s \n", advertisedDevice.toString().c_str());
-    }
-};
-void setup() {
-  Serial.begin(115200); //Enable UART on ESP32
-  Serial.println("Scanning..."); // Print Scanning
-  pinMode(relay, OUTPUT); //make BUILTIN_LED pin as output
-  BLEDevice::init("");
-  pBLEScan = BLEDevice::getScan(); //create new scan
-  pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks()); //Init Callback Function
-  pBLEScan->setActiveScan(true); //active scan uses more power, but get results faster
-  pBLEScan->setInterval(100); // set Scan interval
-  pBLEScan->setWindow(99);  // less or equal setInterval value
-  // Set device as a Wi-Fi Station
-  WiFi.mode(WIFI_STA);
-  // Set PMK key
-  esp_now_set_pmk((uint8_t *)PMK_KEY_STR);
-}
-void loop() 
-{
-  // put your main code here, to run repeatedly:
-  BLEScanResults foundDevices = pBLEScan->start(scanTime, false);
+// Defina a datatype struct_message that will be used for communication between the two modules.
+typedef struct struct_message {
+    String Password;
+} struct_message;
+
+// Create a struct_message called myData
+struct_message myData;
+
+// This is a callback function. i.e., it is a function which will be executed every single time some data is recieved by the lock.
+void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
+
+  // Copy the incoming data into myData.
+  memcpy(&myData, incomingData, sizeof(myData));
+
+  // Print logs to the Serial monitor.
+  Serial.println("Key Recieved.");
+  Serial.println(myData.Password);
   
-  for (int i = 0; i < foundDevices.getCount(); i++)
-  {
-    BLEAdvertisedDevice device = foundDevices.getDevice(i);
-    int rssi = device.getRSSI();
-    Serial.print("RSSI: ");
-    Serial.println(rssi);
-    if (rssi > RSSI_THRESHOLD && device_found == true)
-    {
-
-      // Try and connect using ESPNow and get the key.
-      // Register the receiver board as peer
-    esp_now_peer_info_t peerInfo;
-    memcpy(peerInfo.peer_addr, receiverAddress, 6);
-    peerInfo.channel = 0;
-    //Set the receiver device LMK key
-    for (uint8_t i = 0; i < 16; i++) {
-      peerInfo.lmk[i] = LMK_KEY_STR[i];
-    }
-    // Set encryption to true
-    peerInfo.encrypt = true;
+  // Compare the recieved key with the onboard key and unlock if they match.
+  if(myData.Password.equals(String("THIS IS A CHAR"))){
     
-    // Add receiver as peer        
-    if (esp_now_add_peer(&peerInfo) != ESP_OK){
-      Serial.println("Failed to add peer");
-      return;
-    }
-
-  // Once ESPNow is successfully Init, we will register for Send CB to
-  // get the status of transmitted packet
-  esp_now_register_send_cb(OnDataSent);
-      Serial.println("Door Open");
-      digitalWrite(relay, HIGH);
-      delay(5000);
-      Serial.println("Door Close");
-      digitalWrite(relay, LOW);
-    }
-
+    // Unlock the soleniod lock.
+    digitalWrite(relay, LOW);
+    
+    // Print logs to the Serial monitor.
+    Serial.println("Lock Unlocked");
   }
-  pBLEScan->clearResults();   // delete results fromBLEScan buffer to release memory
+
+  // Wait for 2 seconds and momentarily close the lock before we check if the key is still in the proximity.
+  delay(2000);
+  digitalWrite(relay, HIGH);
+}
+ 
+void setup() {
+  // Initialise Serial Monitor.
+  Serial.begin(115200);
+  pinMode(relay, OUTPUT);
+  digitalWrite(relay, HIGH);
+  
+  // Set device as a Wi-Fi Station.
+  WiFi.mode(WIFI_STA);
+
+  // Initialise ESP-NOW.
+  // Check if ESP-NOW was initialised properly, if it wasn't, log it to the Serial monitor and reset.
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("Error initializing ESP-NOW");
+    return;
+  }
+  
+  // Once ESPNow is successfully initialised, we define OnDataRecv as our callback function.
+  // get recv packer info
+  Serial.println("Waiting!!");
+  esp_now_register_recv_cb(OnDataRecv);
+  
+}
+ 
+void loop() {
+
 }
